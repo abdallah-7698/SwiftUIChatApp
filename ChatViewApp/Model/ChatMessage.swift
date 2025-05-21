@@ -1,3 +1,11 @@
+//
+//  ChatMessage.swift
+//  ChatViewApp
+//
+//  Created by name on 18/05/2025.
+//
+
+
 import Foundation
 
 // Data models

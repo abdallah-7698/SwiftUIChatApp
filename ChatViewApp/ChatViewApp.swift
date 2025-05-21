@@ -8,10 +8,16 @@
 import SwiftUI
 
 @main
-struct ChatViewAppApp: App {
+struct ChatViewApp: App {
     var body: some Scene {
         WindowGroup {
             ChatView()
         }
     }
 }
+
+// make a users view
+// make a groups
+
+//on disconnection can not typing
+// on change state can make referesh to use the resources better 

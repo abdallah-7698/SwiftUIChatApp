@@ -1,110 +1,99 @@
+//
+//  ChatWebSocketManager.swift
+//  ChatViewApp
+//
+//  Created by name on 17/05/2025.
+//
+
+//I think it is better to make it as components
+
+// Connectionas
+// make a connection
+// cancel
+
+// sendable actions
+
+// log in with new id
+// send message to the group
+// send poivate message
+// send Typing Status
+
+// make the final shape of the potocol so we do not edit it each time
+
+// try to replce the call backs and use the sream instead
+// try to avoid the temporal coubling in this code
+
+
+//i will make the view model handle the response for me
+// i will make the manager send the stream for me
+
 import Foundation
 
-class ChatWebSocketManager: NSObject {
+class ChatWebSocketManager {
     private var webSocketTask: URLSessionWebSocketTask?
-    private var session: URLSession!
+    private var socketStream: SocketStream?
     
     // Callback handlers
     var onReceiveMessage: ((ChatMessage) -> Void)?
     var onConnectionChange: ((Bool) -> Void)?
     var onUserListUpdate: (([String]) -> Void)?
     var onError: ((String) -> Void)?
-    
-    private var userId: String
-    
-    init(userId: String) {
-        self.userId = userId
-        super.init()
-        session = URLSession(configuration: .default, delegate: nil, delegateQueue: .main)
-    }
+}
+
+extension ChatWebSocketManager {
     
     func connect() {
+        // Get the URL
         guard let url = URL(string: "ws://localhost:8765") else {
             onError?("Invalid URL")
             return
         }
         
-        webSocketTask = session.webSocketTask(with: url)
-        webSocketTask?.resume()
+        webSocketTask = URLSession.shared.webSocketTask(with: url)
+        socketStream = SocketStream(task: webSocketTask!)
         
-        // Send login message immediately after connecting
-        sendLoginMessage()
-        
-        // Start receiving messages
-        receiveMessage()
-        
+        setReceiveHandler()
         onConnectionChange?(true)
     }
     
     func disconnect() {
-        webSocketTask?.cancel(with: .normalClosure, reason: nil)
+        Task { try? await socketStream?.cancel() }
         onConnectionChange?(false)
     }
+}
+
+//MARK: - Receive the Messages
+extension ChatWebSocketManager {
     
-    private func sendLoginMessage() {
-        let loginMessage = ["type": "login", "user_id": userId]
-        sendJsonMessage(loginMessage)
-    }
-    
-    func sendPublicMessage(_ content: String) {
-        let message = ["type": "message", "content": content]
-        sendJsonMessage(message)
-    }
-    
-    func sendPrivateMessage(_ content: String, to recipient: String) {
-        let message = ["type": "message", "content": content, "to": recipient]
-        sendJsonMessage(message)
-    }
-    
-    func sendTypingStatus(_ isTyping: Bool) {
-        let message = ["type": "typing", "status": isTyping]
-        sendJsonMessage(message)
-    }
-    
-    private func sendJsonMessage(_ message: [String: Any]) {
-        guard let jsonData = try? JSONSerialization.data(withJSONObject: message),
-              let jsonString = String(data: jsonData, encoding: .utf8) else {
-            onError?("Failed to serialize message")
-            return
-        }
-        
-        webSocketTask?.send(.string(jsonString)) { error in
-            if let error = error {
-                self.onError?("Send error: \(error.localizedDescription)")
-            }
-        }
-    }
-    
-    private func receiveMessage() {
-        webSocketTask?.receive { [weak self] result in
-            guard let self = self else { return }
-            
-            switch result {
-            case .success(let message):
-                switch message {
-                case .string(let text):
-                    self.handleMessage(text)
-                case .data(let data):
-                    if let text = String(data: data, encoding: .utf8) {
-                        self.handleMessage(text)
+    private func setReceiveHandler() {
+        Task {
+            do {
+                for try await message in socketStream! {
+                    switch message {
+                    case .string(let string):
+                        print("❌", string)
+                        handleMessage(string)
+                        
+                        //TODO: - make it handle different types of messages
+                    case .data(let data):
+                        print("❌❌", data)
+                        if let text = String(data: data, encoding: .utf8) {
+                            self.handleMessage(text)
+                        }
+                        
+                    @unknown default:
+                        print("Unknown message type")
+                        break
                     }
-                @unknown default:
-                    break
                 }
-                
-                // Continue receiving messages
-                self.receiveMessage()
-                
-            case .failure(let error):
+            } catch {
+                onConnectionChange?(false)
                 self.onError?("Receive error: \(error.localizedDescription)")
-                // Attempt to reconnect after a delay
-                DispatchQueue.main.asyncAfter(deadline: .now() + 5) {
-                    self.connect()
-                }
             }
         }
     }
     
+    // get the json response and convert it into message
     private func handleMessage(_ messageText: String) {
         guard let data = messageText.data(using: .utf8),
               let jsonObject = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -112,6 +101,8 @@ class ChatWebSocketManager: NSObject {
             onError?("Invalid message format")
             return
         }
+        
+        print("❌❌❌", messageType)
         
         switch messageType {
         case "message":
@@ -142,19 +133,45 @@ class ChatWebSocketManager: NSObject {
             break
         }
     }
+    
 }
 
-// Data models
-struct ChatMessage {
-    let from: String
-    let content: String
-    let isPrivate: Bool
-    let to: String?
+// MARK: - Send Data
+extension ChatWebSocketManager {
+    // Make a log in to get an id
+    private func sendLoginMessage(userId: String) {
+        let loginMessage = ["type": "login", "user_id": userId]
+        sendJsonMessage(loginMessage)
+    }
     
-    init(from: String, content: String, isPrivate: Bool, to: String? = nil) {
-        self.from = from
-        self.content = content
-        self.isPrivate = isPrivate
-        self.to = to
+    func sendPublicMessage(_ content: String) {
+        let message = ["type": "message", "content": content]
+        sendJsonMessage(message)
+    }
+    
+    func sendPrivateMessage(_ content: String, to recipient: String) {
+        let message = ["type": "message", "content": content, "to": recipient]
+        sendJsonMessage(message)
+    }
+    
+    func sendTypingStatus(_ isTyping: Bool) {
+        let message = ["type": "typing", "status": isTyping] as [String : Any]
+        sendJsonMessage(message)
+    }
+    
+    private func sendJsonMessage(_ message: [String: Any]) {
+        guard let jsonData = try? JSONSerialization.data(withJSONObject: message),
+              let jsonString = String(data: jsonData, encoding: .utf8) else {
+            onError?("Failed to serialize message")
+            return
+        }
+        
+        Task {
+            if webSocketTask!.state == .running  {
+                await socketStream?.send(.string(jsonString))
+            } else {
+                onError?("Failed to serialize message")
+            }
+        }
     }
 }
